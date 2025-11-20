@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Commande du Bar</title>
+<style>
+  body { font-family: Arial, sans-serif; padding: 20px; background: #f9f9f9; }
+  h1, h2 { text-align: center; }
+  .menu-container, .panier-container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; margin-bottom: 20px; }
+  .boisson, .panier-item { border: 1px solid #ccc; border-radius: 10px; padding: 10px; width: 200px; background: white; text-align: center; box-shadow: 2px 2px 10px rgba(0,0,0,0.1); transition: transform 0.2s;}
+  .boisson:hover { transform: scale(1.05); }
+  .boisson img { max-width: 100%; border-radius: 5px; cursor: pointer; }
+  .dispo { font-weight: bold; color: green; }
+  .rupture { font-weight: bold; color: red; }
+  button { margin-top: 10px; padding: 5px 10px; cursor: pointer; border: none; border-radius: 5px; color: white; font-weight: bold; }
+  button:hover { opacity: 0.9; }
+  input[type=number] { width: 60px; padding: 3px; border-radius: 3px; border: 1px solid #ccc; text-align: center; }
+  #finaliser { background: #28a745; }
+  #payerCarte { background: #007bff; }
+  .totaux { text-align:center; margin-top: 20px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { border: 1px solid #ccc; padding: 5px; text-align: center; }
+  th { background: #f2f2f2; }
+</style>
+</head>
+<body>
+
+<h1>Menu du Bar</h1>
+<div class="menu-container" id="menu"></div>
+
+<h2>Panier</h2>
+<div class="panier-container" id="panier"></div>
+
+<div class="totaux">
+  <p>Total : <span id="total">0</span> €</p>
+  <label>Montant reçu : <input type="number" id="recu" min="0"></label>
+  <p>Rendu : <span id="rendu">0</span> €</p>
+  <button id="finaliser">Finaliser la commande</button>
+  <button id="payerCarte">Payer par carte</button>
+</div>
+
+<h2>Historique des commandes</h2>
+<div id="historique-container"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+import { getFirestore, collection, getDocs, doc, updateDoc, addDoc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+
+// 🔹 Config Firebase
+const firebaseConfig = {
+  apiKey: "AIzaSyA3WRH66KUnjOoK5kkLpdXv88yBMMyjguQ",
+  authDomain: "base-donne-909d4.firebaseapp.com",
+  projectId: "base-donne-909d4",
+  storageBucket: "base-donne-909d4.firebasestorage.app",
+  messagingSenderId: "639643327142",
+  appId: "1:639643327142:web:6b9e27421b6f65f8eff267",
+  measurementId: "G-3VSPFFP3F6"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const menuContainer = document.getElementById('menu');
+const panierContainer = document.getElementById('panier');
+const totalSpan = document.getElementById('total');
+const recuInput = document.getElementById('recu');
+const renduSpan = document.getElementById('rendu');
+const finaliserBtn = document.getElementById('finaliser');
+const payerBtn = document.getElementById('payerCarte');
+const historiqueContainer = document.getElementById('historique-container');
+
+let panier = [];
+
+// 🔹 Afficher le menu
+async function afficherMenu() {
+  menuContainer.innerHTML = "";
+  try {
+    const snapshot = await getDocs(collection(db, "Test"));
+    if (snapshot.empty) { menuContainer.innerHTML = "<p>Aucune boisson trouvée.</p>"; return; }
+
+    snapshot.forEach(docu => {
+      const data = docu.data();
+      const div = document.createElement('div');
+      div.classList.add('boisson');
+      div.innerHTML = `
+        <h3>${data.Nom}</h3>
+        <img src="${data.PhotoURL || 'https://via.placeholder.com/150'}" alt="${data.Nom}">
+        <p>Prix : ${data.Prix}€</p>
+        <p class="${data.Quantitées>0?'dispo':'rupture'}">
+          ${data.Quantitées>0? 'Disponible ('+data.Quantitées+')':'Rupture de stock'}
+        </p>
+      `;
+      const img = div.querySelector('img');
+      if(data.Quantitées>0){
+        img.addEventListener('click', () => ajouterPanier(docu.id, data));
+      } else {
+        img.style.opacity = 0.5;
+        img.style.cursor = "default";
+      }
+      menuContainer.appendChild(div);
+    });
+  } catch (e) { console.error(e); }
+}
+
+// 🔹 Ajouter au panier
+function ajouterPanier(id, produit) {
+  const exist = panier.find(p => p.id===id);
+  if(exist){
+    if(exist.quantite < produit.Quantitées){
+      exist.quantite++;
+    } else {
+      alert("Stock insuffisant pour " + produit.Nom);
+    }
+  } else {
+    if(produit.Quantitées > 0){
+      panier.push({...produit, id, quantite:1});
+    } else {
+      alert("Produit en rupture de stock");
+    }
+  }
+  updatePanier();
+}
+
+// 🔹 Mettre à jour le panier
+function updatePanier() {
+  panierContainer.innerHTML = "";
+  let total = 0;
+  panier.forEach(item => {
+    total += item.Prix * item.quantite;
+    const div = document.createElement('div');
+    div.classList.add('panier-item');
+    div.innerHTML = `
+      <h4>${item.Nom}</h4>
+      <p>Prix : ${item.Prix}€ x ${item.quantite}</p>
+      <button>-</button>
+      <button>+</button>
+    `;
+    const [btnMoins, btnPlus] = div.querySelectorAll('button');
+    btnMoins.addEventListener('click', ()=>{ if(item.quantite>1){item.quantite--; updatePanier();} });
+    btnPlus.addEventListener('click', ()=>{ if(item.quantite < item.Quantitées){ item.quantite++; updatePanier(); } });
+    panierContainer.appendChild(div);
+  });
+  totalSpan.textContent = total.toFixed(2);
+  updateRendu();
+}
+
+// 🔹 Calcul rendu
+function updateRendu(){
+  const total = parseFloat(totalSpan.textContent);
+  const recu = parseFloat(recuInput.value) || 0;
+  renduSpan.textContent = (recu - total >=0 ? (recu - total).toFixed(2) : "0.00");
+}
+
+recuInput.addEventListener('input', updateRendu);
+
+// 🔹 Sauvegarder commande dans Firestore
+async function saveCommande(typePaiement){
+  if(panier.length === 0) return;
+  try {
+    const commande = {
+      produits: panier.map(item => ({ nom: item.Nom, quantite: item.quantite, prix: item.Prix })),
+      total: parseFloat(totalSpan.textContent),
+      date: new Date().toISOString(),
+      typePaiement
+    };
+    const colRef = collection(db, "Commandes");
+    await addDoc(colRef, commande);
+    afficherHistorique();
+  } catch(e){
+    console.error(e);
+  }
+}
+
+// 🔹 Afficher historique
+async function afficherHistorique(){
+  historiqueContainer.innerHTML = "";
+  try {
+    const snapshot = await getDocs(collection(db, "Commandes"));
+    if(snapshot.empty) {
+      historiqueContainer.innerHTML = "<p>Aucune commande pour le moment.</p>";
+      return;
+    }
+    const table = document.createElement("table");
+    table.innerHTML = "<tr><th>Date</th><th>Produits</th><th>Total (€)</th><th>Type Paiement</th></tr>";
+    snapshot.forEach(docu => {
+      const data = docu.data();
+      const produitsStr = data.produits.map(p => `${p.nom} x${p.quantite}`).join(", ");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${new Date(data.date).toLocaleString()}</td>
+                      <td>${produitsStr}</td>
+                      <td>${data.total.toFixed(2)}</td>
+                      <td>${data.typePaiement}</td>`;
+      table.appendChild(tr);
+    });
+    historiqueContainer.appendChild(table);
+  } catch(e){
+    console.error(e);
+  }
+}
+
+// 🔹 Réinitialiser panier
+function resetPanier(){
+  panier = [];
+  updatePanier();
+  recuInput.value = "";
+  renduSpan.textContent = "0.00";
+}
+
+// 🔹 Bouton finaliser
+finaliserBtn.addEventListener('click', async ()=>{
+  if(panier.length===0){ alert("Panier vide !"); return; }
+  try{
+    const promises = panier.map(async item => {
+      const docRef = doc(db,"Test",item.id);
+      await updateDoc(docRef,{ Quantitées: item.Quantitées - item.quantite });
+    });
+    await Promise.all(promises);
+
+    await saveCommande("Espèces");
+    resetPanier();
+    await afficherMenu(); // 🔹 Recharger menu avec nouvelles quantités
+  } catch(e){ console.error(e); alert("Erreur lors de la finalisation"); }
+});
+
+// 🔹 Bouton payer par carte
+payerBtn.addEventListener('click', async ()=>{
+  if(panier.length===0){ alert("Panier vide !"); return; }
+
+  const promises = panier.map(async item => {
+    const docRef = doc(db,"Test",item.id);
+    await updateDoc(docRef,{ Quantitées: item.Quantitées - item.quantite });
+  });
+  await Promise.all(promises);
+
+  await saveCommande("Carte");
+  resetPanier();
+  await afficherMenu(); // 🔹 Recharger menu avec nouvelles quantités
+});
+
+// 🔹 Initialisation
+afficherMenu();
+afficherHistorique();
+
+</script>
+</body>
+</html>
